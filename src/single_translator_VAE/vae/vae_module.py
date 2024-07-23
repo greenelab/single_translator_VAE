@@ -206,7 +206,7 @@ class VAEModule(BaseModuleClass, TunableMixin):
         assert not torch.isnan(qz_v).any(), "qz_v contains NaNs"
         assert not torch.isnan(z).any(), "z contains NaNs"
 
-        outputs = z = z, qz_m = qz_m, qz_v = qz_v, ql_m = ql_m, ql_v = ql_v, library = library
+        outputs = {"z": z, "qz_m": qz_m, "qz_v": qz_v, "ql_m": ql_m, "ql_v": ql_v, "library": library}
 
         return outputs
 
@@ -239,7 +239,7 @@ class VAEModule(BaseModuleClass, TunableMixin):
             px_r = self.px_r
         px_r = torch.exp(px_r)
 
-        outputs = px_scale = px_scale, px_r = px_r, px_rate = px_rate
+        outputs = {"px_scale": px_scale, "px_r": px_r, "px_rate": px_rate}
 
         return outputs
 
