@@ -1,3 +1,9 @@
+## The following project is a work in progress and still in development.
+
+## Full documentation on this README will be provided at a later stage of devlopment.
+
+### Summary: The following package is a conditional variational autoencoder model implemented through scVI design for data translation between single-cell and sing-nucleus RNA-sequencing.
+
 # single_translator_VAE
 
 [![Tests][badge-tests]][link-tests]
@@ -31,7 +37,7 @@ pip install single_translator_VAE
 1. Install the latest development version:
 
 ```bash
-pip install git+https://github.com/ivichadriana/single_translator_VAE.git@main
+pip install git+https://github.com/greenelab/single_translator_VAE.git@main
 ```
 
 ## Release notes
