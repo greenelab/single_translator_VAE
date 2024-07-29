@@ -379,6 +379,9 @@ def prepare_data_and_labels(
         label_map = {"single_cell": 0, "single_nucleus": 1}
     batch_tensor = []
 
+    # Ensure all labels are strings
+    adata.obs[labels_key] = adata.obs[labels_key].astype(str)
+
     # Apply label map and handle missing labels by mapping with get to avoid KeyErrors
     labels_encoded = adata.obs[labels_key].map(lambda x: label_map.get(x, -1)).values
 

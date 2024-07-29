@@ -4,6 +4,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import ray
+import ray.train
 import torch.cuda
 import torch.nn as nn
 from anndata import AnnData
@@ -73,7 +74,7 @@ class VAEModel(BaseModelClass, VAEMixin, TunableMixin, RNASeqMixin):
         n_layers: Tunable[int] = 3,
         batch_size: Tunable[int] = 150,
         use_batch_norm: Tunable[bool] = False,
-        lr: Tunable[float] = 0.002,
+        lr: Tunable[float] = 0.001,
         train_labels: Optional[list[str]] = None,
         kl_weight: Tunable[float] = 3,
         # class_weight: Tunable[float] = 100,
@@ -271,8 +272,8 @@ class VAEModel(BaseModelClass, VAEMixin, TunableMixin, RNASeqMixin):
         max_epochs: int = 500,
         use_gpu: bool = False,
         validation_size: float = 0.2,
-        patience: int = 20,
-        min_delta: float = 0.01,
+        patience: int = 15,
+        min_delta: float = 0.1,
     ):
         """
         Train the model with validation support and a progress bar, with early stopping.
@@ -316,7 +317,7 @@ class VAEModel(BaseModelClass, VAEMixin, TunableMixin, RNASeqMixin):
         optimizer = Adam(self.module.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
         # Initialize learning rate scheduler
-        scheduler = ReduceLROnPlateau(optimizer, "min", patience=10, factor=0.1, min_lr=1e-5)
+        scheduler = ReduceLROnPlateau(optimizer, "min", patience=10, factor=0.5, min_lr=1e-5)
 
         # Progress bar setup
         progress_bar = tqdm(range(max_epochs), desc="Epochs", leave=True)
@@ -340,17 +341,30 @@ class VAEModel(BaseModelClass, VAEMixin, TunableMixin, RNASeqMixin):
                 batch = {k: v.to(device) for k, v in batch.items()}
                 optimizer.zero_grad()
 
+                # Check for NaNs in input data
+                if torch.isnan(batch[REGISTRY_KEYS.X_KEY]).any():
+                    raise ValueError("Input data contains NaN values.")
+
                 labels = batch[REGISTRY_KEYS.LABELS_KEY].long()
                 batches_keys = batch[REGISTRY_KEYS.BATCH_KEY].long()
 
                 # Perform model operations
                 outputs = self.module.inference(batch[REGISTRY_KEYS.X_KEY], cat_list=labels, batch_index=batches_keys)
+
+                # Check for NaNs in the outputs
+                if torch.isnan(outputs["z"]).any() or torch.isnan(outputs["library"]).any():
+                    raise ValueError("NaN values found in latent space or library size.")
+
                 generative_outputs = self.module.generative(
                     z=outputs["z"], library=outputs["library"], cat_list=labels, batch_index=batches_keys
                 )
 
+                # Check for NaNs in the generative outputs
+                if torch.isnan(generative_outputs["px_rate"]).any():
+                    raise ValueError("NaN values found in generative outputs.")
+
                 # Compute loss
-                loss_output, loss_dict = self.module.loss(batch, outputs, generative_outputs)  # , labels.squeeze())
+                loss_output, loss_dict = self.module.loss(batch, outputs, generative_outputs)
                 loss = loss_output.loss
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.module.parameters(), max_norm=0.85)  # Gradient clipping
@@ -370,11 +384,20 @@ class VAEModel(BaseModelClass, VAEMixin, TunableMixin, RNASeqMixin):
                     outputs = self.module.inference(
                         batch[REGISTRY_KEYS.X_KEY], cat_list=labels, batch_index=batches_keys
                     )
+
+                    # Check for NaNs in the outputs during validation
+                    if torch.isnan(outputs["z"]).any() or torch.isnan(outputs["library"]).any():
+                        raise ValueError("NaN values found in latent space or library size during validation.")
+
                     generative_outputs = self.module.generative(
                         z=outputs["z"], library=outputs["library"], cat_list=labels, batch_index=batches_keys
                     )
 
-                    loss_output, loss_dict = self.module.loss(batch, outputs, generative_outputs)  # , labels.squeeze())
+                    # Check for NaNs in the generative outputs during validation
+                    if torch.isnan(generative_outputs["px_rate"]).any():
+                        raise ValueError("NaN values found in generative outputs during validation.")
+
+                    loss_output, loss_dict = self.module.loss(batch, outputs, generative_outputs)
                     val_loss += loss_output.loss.item()
                     for key in epoch_val_losses:
                         epoch_val_losses[key].append(loss_dict[key])

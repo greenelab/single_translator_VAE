@@ -2,7 +2,7 @@
 
 ## Full documentation on this README will be provided at a later stage of devlopment.
 
-### Summary: The following package is a conditional variational autoencoder model implemented through scVI design for data translation between single-cell and sing-nucleus RNA-sequencing.
+### Summary: The following package is a conditional variational autoencoder model implemented through scVI design for data translation between single-cell and single-nucleus RNA-sequencing.
 
 # single_translator_VAE
 

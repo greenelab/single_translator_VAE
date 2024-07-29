@@ -136,7 +136,7 @@ def results_PCA(
     pca_latent = pca.fit_transform(latent_space)
 
     # Set up colors based on labels
-    color_map = {dtype: plt.cm.tab10(i) for i, dtype in enumerate(adata.obs[labels_key].cat.categories)}
+    color_map = {dtype: plt.cm.tab20(i) for i, dtype in enumerate(adata.obs[labels_key].cat.categories)}
     colors = [color_map[label] for label in adata.obs[labels_key]]
 
     # Plotting
@@ -328,9 +328,15 @@ def rmse_per_celltype(rmse_dict):
     plt.show()
 
 
-def transformed_pca_data(original_sn, original_sc, sn_to_sn, sc_to_sc, sc_to_sn, sn_to_sc):
+def transformed_pca_data(
+    original_sn: Optional[np.ndarray],
+    original_sc: Optional[np.ndarray],
+    sn_to_sn: Optional[np.ndarray],
+    sc_to_sc: Optional[np.ndarray],
+    sc_to_sn: Optional[np.ndarray],
+    sn_to_sc: Optional[np.ndarray],
+):
     """
-
     Plots PCA of the input and reconstructed datasets using the same PCA fitting.
 
     Parameters
@@ -350,44 +356,93 @@ def transformed_pca_data(original_sn, original_sc, sn_to_sn, sc_to_sc, sc_to_sn,
 
     """
     # Combine original datasets for scaling and PCA
-    original_data = np.concatenate((original_sn, original_sc))
-    reconstructed_data = np.concatenate((sn_to_sn, sc_to_sc, sc_to_sn, sn_to_sc))
+    original_data = []
+    if original_sn is not None:
+        original_data.append(original_sn)
+    if original_sc is not None:
+        original_data.append(original_sc)
 
-    # Scale all data based on the scale of the original data
-    scaler = StandardScaler()
-    original_data_scaled = scaler.fit_transform(original_data)
-    reconstructed_data_scaled = scaler.transform(reconstructed_data)
+    if len(original_data) > 0:
+        original_data = np.concatenate(original_data)
+    else:
+        original_data = None
+
+    # Combine reconstructed datasets
+    reconstructed_data = []
+    if sn_to_sn is not None:
+        reconstructed_data.append(sn_to_sn)
+    if sc_to_sc is not None:
+        reconstructed_data.append(sc_to_sc)
+    if sc_to_sn is not None:
+        reconstructed_data.append(sc_to_sn)
+    if sn_to_sc is not None:
+        reconstructed_data.append(sn_to_sc)
+
+    if len(reconstructed_data) > 0:
+        reconstructed_data = np.concatenate(reconstructed_data)
+    else:
+        reconstructed_data = None
+
+    # Scale all data based on the scale of the original data if available
+    if original_data is not None:
+        scaler = StandardScaler()
+        original_data_scaled = scaler.fit_transform(original_data)
+        if reconstructed_data is not None:
+            reconstructed_data_scaled = scaler.transform(reconstructed_data)
+    else:
+        original_data_scaled = None
+        reconstructed_data_scaled = None
 
     # Apply PCA using fit_transform on the combined original data, then transform reconstructed data
-    pca = PCA(n_components=2)
-    pca.fit(original_data_scaled)  # Fit PCA on the original data
+    if original_data_scaled is not None:
+        pca = PCA(n_components=2)
+        pca.fit(original_data_scaled)  # Fit PCA on the original data
 
-    pca_original_sn = pca.transform(original_data_scaled[: len(original_sn)])
-    pca_original_sc = pca.transform(original_data_scaled[len(original_sn) :])
+        pca_original_sn = pca.transform(original_data_scaled[: len(original_sn)]) if original_sn is not None else None
+        pca_original_sc = pca.transform(original_data_scaled[len(original_sn) :]) if original_sc is not None else None
 
-    # Ensure the reconstruction uses the same PCA object
-    pca_sn_to_sn = pca.transform(reconstructed_data_scaled[: len(sn_to_sn)])
-    pca_sc_to_sc = pca.transform(reconstructed_data_scaled[len(sn_to_sn) : len(sn_to_sn) + len(sc_to_sc)])
-    pca_sc_to_sn = pca.transform(
-        reconstructed_data_scaled[len(sn_to_sn) + len(sc_to_sc) : len(sn_to_sn) + len(sc_to_sc) + len(sc_to_sn)]
-    )
-    pca_sn_to_sc = pca.transform(reconstructed_data_scaled[-len(sn_to_sc) :])
+        # Ensure the reconstruction uses the same PCA object
+        offset = 0
+        pca_sn_to_sn = pca.transform(reconstructed_data_scaled[: len(sn_to_sn)]) if sn_to_sn is not None else None
+        offset += len(sn_to_sn) if sn_to_sn is not None else 0
+        pca_sc_to_sc = (
+            pca.transform(reconstructed_data_scaled[offset : offset + len(sc_to_sc)]) if sc_to_sc is not None else None
+        )
+        offset += len(sc_to_sc) if sc_to_sc is not None else 0
+        pca_sc_to_sn = (
+            pca.transform(reconstructed_data_scaled[offset : offset + len(sc_to_sn)]) if sc_to_sn is not None else None
+        )
+        offset += len(sc_to_sn) if sc_to_sn is not None else 0
+        pca_sn_to_sc = pca.transform(reconstructed_data_scaled[offset:]) if sn_to_sc is not None else None
+    else:
+        pca_original_sn = None
+        pca_original_sc = None
+        pca_sn_to_sn = None
+        pca_sc_to_sc = None
+        pca_sc_to_sn = None
+        pca_sn_to_sc = None
 
     # Plotting
     fig, axes = plt.subplots(1, 2, figsize=(12, 6))
 
     # First plot for original data
-    axes[0].scatter(pca_original_sn[:, 0], pca_original_sn[:, 1], c="blue", label="Original SN", marker="o")
-    axes[0].scatter(pca_original_sc[:, 0], pca_original_sc[:, 1], c="red", label="Original SC", marker="o")
+    if pca_original_sn is not None:
+        axes[0].scatter(pca_original_sn[:, 0], pca_original_sn[:, 1], c="blue", label="Original SN", marker="o")
+    if pca_original_sc is not None:
+        axes[0].scatter(pca_original_sc[:, 0], pca_original_sc[:, 1], c="red", label="Original SC", marker="o")
     axes[0].set_title("PCA of Original Data", fontweight="bold", fontsize=12)
     axes[0].set_xlabel("PC1")
     axes[0].set_ylabel("PC2")
 
     # Second plot for reconstructed and transformed data
-    axes[1].scatter(pca_sn_to_sn[:, 0], pca_sn_to_sn[:, 1], c="blue", label="SN to SN: Recon.", marker="o")
-    axes[1].scatter(pca_sc_to_sc[:, 0], pca_sc_to_sc[:, 1], c="red", label="SC to SC: Recon.", marker="o")
-    axes[1].scatter(pca_sc_to_sn[:, 0], pca_sc_to_sn[:, 1], c="lightblue", label="SC to SN: Transf.", marker="*")
-    axes[1].scatter(pca_sn_to_sc[:, 0], pca_sn_to_sc[:, 1], c="pink", label="SN to SC: Transf.", marker="*")
+    if pca_sn_to_sn is not None:
+        axes[1].scatter(pca_sn_to_sn[:, 0], pca_sn_to_sn[:, 1], c="blue", label="SN to SN: Recon.", marker="o")
+    if pca_sc_to_sc is not None:
+        axes[1].scatter(pca_sc_to_sc[:, 0], pca_sc_to_sc[:, 1], c="red", label="SC to SC: Recon.", marker="o")
+    if pca_sc_to_sn is not None:
+        axes[1].scatter(pca_sc_to_sn[:, 0], pca_sc_to_sn[:, 1], c="lightblue", label="SC to SN: Transf.", marker="*")
+    if pca_sn_to_sc is not None:
+        axes[1].scatter(pca_sn_to_sc[:, 0], pca_sn_to_sc[:, 1], c="pink", label="SN to SC: Transf.", marker="*")
     axes[1].set_title("PCA of Reconstructed and Transformed Data", fontweight="bold", fontsize=12)
     axes[1].set_xlabel("PC1")
     axes[1].set_ylabel("PC2")
@@ -463,3 +518,73 @@ def transformed_pca_data_with_input(original_sn, original_sc, sn_to_sn, sc_to_sc
         ax.legend()
     plt.tight_layout()
     plt.show()
+
+
+def deconvolution_results(evaluation_results):
+    """
+    Plot RMSE and Pearson's correlation for each reference dataset.
+
+    This function generates bar plots for the RMSE and Pearson's correlation coefficient for each reference dataset,
+    allowing for visual comparison of the performance of each reference.
+
+    Parameters
+    ----------
+    evaluation_results : dict
+        A dictionary where each key corresponds to a reference type and each value is another dictionary containing
+        the RMSE and Pearson's correlation coefficient for that reference.
+
+    """
+    # Extracting data for plotting
+    ref_names = list(evaluation_results.keys())
+    rmse_values = [evaluation_results[ref]["RMSE"] for ref in ref_names]
+    correlation_values = [evaluation_results[ref]["Correlation"] for ref in ref_names]
+
+    # Plot RMSE
+    plt.figure(figsize=(10, 5))
+    sns.barplot(x=ref_names, y=rmse_values, palette="viridis")
+    plt.title("RMSE for Each Reference")
+    plt.ylabel("RMSE")
+    plt.xlabel("Reference")
+    plt.ylim(0, max(rmse_values) * 1.1)
+    plt.show()
+
+    # Plot Pearson's Correlation
+    plt.figure(figsize=(10, 5))
+    sns.barplot(x=ref_names, y=correlation_values, palette="plasma")
+    plt.title("Pearson's Correlation for Each Reference")
+    plt.ylabel("Correlation")
+    plt.xlabel("Reference")
+    plt.ylim(0, 1)
+    plt.show()
+
+
+def estimated_vs_real_proportions(calc_prop_tot, prop_df):
+    """
+    Plot scatter plots of estimated versus real cell type proportions for each reference dataset.
+
+    This function creates scatter plots comparing the estimated proportions against the real proportions for each reference.
+    A red dashed diagonal line represents perfect agreement.
+
+    Parameters
+    ----------
+    calc_prop_tot : dict of pd.DataFrame
+        A dictionary containing the estimated proportions of cell types for each reference.
+        Each key corresponds to a reference type, and each value is a DataFrame where rows are samples and columns are cell types.
+    prop_df : pd.DataFrame
+        DataFrame containing the known proportions of cell types for each sample. Each row corresponds to a sample, and each column corresponds to a cell type.
+
+    """
+    for ref_name, est_prop_df in calc_prop_tot.items():
+        # Ensure the indices and columns match
+        est_prop_df = est_prop_df.reindex(prop_df.index)
+        est_prop_df = est_prop_df[prop_df.columns]
+
+        # Scatter plot for each reference
+        plt.figure(figsize=(8, 8))
+        plt.scatter(prop_df.values.flatten(), est_prop_df.values.flatten(), alpha=0.5)
+        plt.title(f"Estimated vs Real Proportions ({ref_name})")
+        plt.xlabel("Real Proportions")
+        plt.ylabel("Estimated Proportions")
+        plt.plot([0, 1], [0, 1], "r--")  # Diagonal line for perfect agreement
+        plt.grid(True)
+        plt.show()

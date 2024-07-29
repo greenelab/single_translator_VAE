@@ -52,7 +52,7 @@ class VAEModule(BaseModuleClass, TunableMixin):
         n_hidden: int = 610,
         n_latent: int = 460,
         n_layers: int = 2,
-        lr: float = 0.002,
+        lr: float = 0.001,
         adata: AnnData = None,
         kl_weight: Tunable[float] = 3,
         recon_weight: Tunable[float] = 0.5,
@@ -94,7 +94,7 @@ class VAEModule(BaseModuleClass, TunableMixin):
             pass
         else:
             raise ValueError("dispersion must be one of 'gene', 'gene-batch', 'gene-label', 'gene-cell'.")
-        # self.px_r = torch.nn.Parameter(torch.randn(n_input))
+
         self._module_kwargs = {
             "n_hidden": n_hidden,
             "n_latent": self.n_latent,

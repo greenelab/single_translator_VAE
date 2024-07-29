@@ -8,6 +8,7 @@ import ray as ray
 import scanpy as sc
 import torch
 import torch.nn
+from scipy.optimize import nnls
 from scipy.stats import poisson
 
 import single_translator_VAE as sv
@@ -32,7 +33,7 @@ def merge_strings(row):
     return row + "-1"
 
 
-def prep_files_for_deconvolution(bulks, reference, path, file_name, deconvolution_method, genes, cell_types):
+def prep_files_for_deconvolution(bulks, reference, path, file_name, deconvolution_method):
     """
     Prepare and save the data for deconvolution methods.
 
@@ -57,44 +58,44 @@ def prep_files_for_deconvolution(bulks, reference, path, file_name, deconvolutio
         os.makedirs(method_path)
 
     file_paths = {}
+    match deconvolution_method:
+        case "cibersortx":
+            reference_data = np.vstack([np.append("gene_ids", cell_types), np.column_stack([genes, reference])])
+            ref_file_path = os.path.join(method_path, f"{file_name}_reference.txt")
+            np.savetxt(ref_file_path, reference_data, fmt="%s", delimiter="\t")
+            file_paths["reference"] = ref_file_path
 
-    if deconvolution_method == "cibersortx":
-        reference_data = np.vstack([np.append("gene_ids", cell_types), np.column_stack([genes, reference])])
-        ref_file_path = os.path.join(method_path, f"{file_name}_reference.txt")
-        np.savetxt(ref_file_path, reference_data, fmt="%s", delimiter="\t")
-        file_paths["reference"] = ref_file_path
+            if bulks is not None:
+                bulks_data = np.vstack(
+                    [np.append("gene_ids", np.arange(bulks.shape[1])), np.column_stack([genes, bulks])]
+                )
+                bulks_file_path = os.path.join(method_path, f"{file_name}_bulks.txt")
+                np.savetxt(bulks_file_path, bulks_data, fmt="%s", delimiter="\t")
+                file_paths["bulks"] = bulks_file_path
+        case "nnls":
+            reference_data = np.hstack([np.array([["gene_ids"] + list(genes)]).T, np.vstack([cell_types, reference]).T])
+            ref_file_path = os.path.join(method_path, f"{file_name}_reference.txt")
+            np.savetxt(ref_file_path, reference_data, fmt="%s", delimiter="\t")
+            file_paths["reference"] = ref_file_path
 
-        if bulks is not None:
-            bulks_data = np.vstack([np.append("gene_ids", np.arange(bulks.shape[1])), np.column_stack([genes, bulks])])
-            bulks_file_path = os.path.join(method_path, f"{file_name}_bulks.txt")
-            np.savetxt(bulks_file_path, bulks_data, fmt="%s", delimiter="\t")
-            file_paths["bulks"] = bulks_file_path
+            if bulks is not None:
+                bulks_data = np.hstack(
+                    [np.array([["gene_ids"] + list(genes)]).T, np.vstack([np.arange(bulks.shape[1]), bulks]).T]
+                )
+                bulks_file_path = os.path.join(method_path, f"{file_name}_bulks.txt")
+                np.savetxt(bulks_file_path, bulks_data, fmt="%s", delimiter="\t")
+                file_paths["bulks"] = bulks_file_path
+        case "bayesprism":
+            reference_df = pd.DataFrame(reference, index=genes, columns=cell_types)
+            ref_file_path = os.path.join(method_path, f"{file_name}_reference.csv")
+            reference_df.to_csv(ref_file_path, index_label=False)
+            file_paths["reference"] = ref_file_path
 
-    elif deconvolution_method == "nnls":
-        reference_data = np.hstack([np.array([["gene_ids"] + list(genes)]).T, np.vstack([cell_types, reference]).T])
-        ref_file_path = os.path.join(method_path, f"{file_name}_reference.txt")
-        np.savetxt(ref_file_path, reference_data, fmt="%s", delimiter="\t")
-        file_paths["reference"] = ref_file_path
-
-        if bulks is not None:
-            bulks_data = np.hstack(
-                [np.array([["gene_ids"] + list(genes)]).T, np.vstack([np.arange(bulks.shape[1]), bulks]).T]
-            )
-            bulks_file_path = os.path.join(method_path, f"{file_name}_bulks.txt")
-            np.savetxt(bulks_file_path, bulks_data, fmt="%s", delimiter="\t")
-            file_paths["bulks"] = bulks_file_path
-
-    elif deconvolution_method == "bayesprism":
-        reference_df = pd.DataFrame(reference, index=genes, columns=cell_types)
-        ref_file_path = os.path.join(method_path, f"{file_name}_reference.csv")
-        reference_df.to_csv(ref_file_path, index_label=False)
-        file_paths["reference"] = ref_file_path
-
-        if bulks is not None:
-            bulks_df = pd.DataFrame(bulks, index=genes, columns=np.arange(bulks.shape[1]))
-            bulks_file_path = os.path.join(method_path, f"{file_name}_bulks.csv")
-            bulks_df.to_csv(bulks_file_path, index_label=False)
-            file_paths["bulks"] = bulks_file_path
+            if bulks is not None:
+                bulks_df = pd.DataFrame(bulks, index=genes, columns=np.arange(bulks.shape[1]))
+                bulks_file_path = os.path.join(method_path, f"{file_name}_bulks.csv")
+                bulks_df.to_csv(bulks_file_path, index_label=False)
+                file_paths["bulks"] = bulks_file_path
 
     return file_paths
 
@@ -391,3 +392,133 @@ def make_prop_table(adata: sc.AnnData, obs):
     table = {"Cell_Types": cell_types, "Num_Cells": num_cells, "Prop_Cells": prop_cells}
     table = pd.DataFrame(table)
     return table
+
+
+def calc_nnls(all_refs, prop_df, pseudo_df):
+    """
+    Perform non-negative least squares (NNLS) deconvolution of simulated bulk RNA-seq data.
+
+    This function applies NNLS to deconvolve simulated bulk RNA-seq data using different reference datasets.
+    It compares the predicted cell type proportions with known proportions and calculates residuals.
+
+    Parameters
+    ----------
+    all_refs : dict of pd.DataFrame
+        A dictionary containing reference datasets for deconvolution. Each key is a string identifying the reference type,
+        and each value is a DataFrame where rows correspond to cell types and columns to features (e.g., genes).
+    prop_df : pd.DataFrame
+        DataFrame containing the known proportions of cell types for each sample in the simulated bulk data.
+        Each row corresponds to a sample, and each column corresponds to a cell type.
+    pseudo_df : pd.DataFrame
+        DataFrame containing the simulated bulk RNA-seq data. Each row corresponds to a sample,
+        and each column corresponds to a feature (e.g., gene expression levels).
+
+    Returns
+    -------
+    calc_prop_tot : dict of pd.DataFrame
+        A dictionary containing the estimated proportions of cell types for each reference.
+        Each key corresponds to a reference type, and each value is a DataFrame where rows are samples and columns are cell types.
+    calc_res_tot : dict of np.ndarray
+        A dictionary containing the residuals (error terms) from the NNLS fitting for each reference.
+        Each key corresponds to a reference type, and each value is an array of residuals for each sample.
+    custom_res_tot : dict of pd.DataFrame
+        A dictionary containing the residuals between the known and estimated cell type proportions for each reference.
+        Each key corresponds to a reference type, and each value is a DataFrame where rows are samples and columns are cell types.
+    comparison_prop_tot : dict
+        A placeholder dictionary for additional comparison results, currently not implemented.
+    missing_cell_tot : dict
+        A placeholder dictionary for handling missing cell types, currently not implemented.
+
+    Notes
+    -----
+    - Ensure that the reference datasets (`all_refs`) and the known proportions (`prop_df`) have consistent dimensions.
+    """
+    calc_prop_tot = {}
+    calc_res_tot = {}
+    custom_res_tot = {}
+
+    for exp, ref_df in all_refs.items():
+        calc_prop_all = pd.DataFrame()
+        custom_res_all = pd.DataFrame()
+        calc_res_all = []
+
+        print(f"Reference: {exp}")
+
+        # Extracting reference matrix and verifying its integrity
+        ref = ref_df.values
+        if ref.shape[0] != prop_df.shape[1]:
+            raise ValueError(f"Reference '{exp}' and prop_df have inconsistent dimensions.")
+
+        # Calculate predicted values and residuals for each row
+        for sample in range(len(pseudo_df)):
+            sample_data = pseudo_df.iloc[sample].values
+
+            # Apply NNLS to obtain the estimated proportions
+            calc_prop, calc_res = nnls(ref, sample_data)
+
+            # Normalize proportions
+            tot = np.sum(calc_prop)
+            if tot > 0:
+                calc_prop = calc_prop / tot
+            else:
+                calc_prop = np.zeros_like(calc_prop)
+
+            # Compute residuals compared to known proportions
+            actual_prop = prop_df.iloc[sample].values
+            custom_res = actual_prop - calc_prop
+
+            # Convert to DataFrame for easier handling
+            calc_prop_df = pd.DataFrame(calc_prop).T
+            custom_res_df = pd.DataFrame(custom_res).T
+
+            # Append to accumulated DataFrames
+            calc_prop_all = pd.concat([calc_prop_all, calc_prop_df], ignore_index=True)
+            custom_res_all = pd.concat([custom_res_all, custom_res_df], ignore_index=True)
+            calc_res_all.append(calc_res)
+
+        # Store results in the respective dictionaries
+        calc_prop_tot[exp] = calc_prop_all
+        calc_prop_tot[exp].columns = ref_df.columns
+        calc_res_tot[exp] = np.array(calc_res_all)
+        custom_res_tot[exp] = custom_res_all
+
+    return calc_prop_tot, calc_res_tot, custom_res_tot
+
+
+def evaluate_deconvolution_references(calc_prop_tot, prop_df):
+    """
+    Evaluate the performance of different reference datasets using RMSE and Pearson's correlation.
+
+    This function calculates the Root Mean Squared Error (RMSE) and Pearson's correlation coefficient
+    between the estimated and real cell type proportions for each reference dataset.
+
+    Parameters
+    ----------
+    calc_prop_tot : dict of pd.DataFrame
+        A dictionary containing the estimated proportions of cell types for each reference.
+        Each key corresponds to a reference type, and each value is a DataFrame where rows are samples and columns are cell types.
+    prop_df : pd.DataFrame
+        DataFrame containing the known proportions of cell types for each sample. Each row corresponds to a sample, and each column corresponds to a cell type.
+
+    Returns
+    -------
+    evaluation_results : dict
+        A dictionary where each key corresponds to a reference type and each value is another dictionary containing
+        the RMSE and Pearson's correlation coefficient for that reference.
+    """
+    evaluation_results = {}
+
+    for ref_name, est_prop_df in calc_prop_tot.items():
+        # Ensure the indices and columns match
+        est_prop_df = est_prop_df.reindex(prop_df.index)
+        est_prop_df = est_prop_df[prop_df.columns]
+
+        # Calculate RMSE using the custom rmse function
+        rmse_value = rmse(prop_df.values, est_prop_df.values)
+
+        # Calculate Pearson's correlation
+        correlation = np.corrcoef(prop_df.values.flatten(), est_prop_df.values.flatten())[0, 1]
+
+        evaluation_results[ref_name] = {"RMSE": rmse_value, "Correlation": correlation}
+
+    return evaluation_results

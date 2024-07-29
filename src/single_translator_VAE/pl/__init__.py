@@ -1,4 +1,6 @@
 from .plot import (
+    deconvolution_results,
+    estimated_vs_real_proportions,
     loss_plots,
     pca_of_augmentation,
     reconstruction_PCA,
