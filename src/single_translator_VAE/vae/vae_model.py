@@ -86,6 +86,7 @@ class VAEModel(BaseModelClass, VAEMixin, TunableMixin, RNASeqMixin):
         encode_batch: Tunable[bool] = False,
         transform_batch: torch.Tensor | None = None,
         batch_representation: str = "one-hot",
+        class_weights: bool = True,
         # kl_annealing_start: Tunable[float] = 10.0,
         # kl_annealing_steepness: Tunable[float] = 0.5,
         **model_kwargs,
@@ -112,10 +113,14 @@ class VAEModel(BaseModelClass, VAEMixin, TunableMixin, RNASeqMixin):
         self.encode_batch = encode_batch
         self.transform_batch = transform_batch
         self.batch_representation = batch_representation
+        self.class_weights = class_weights
 
         library_log_means, library_log_vars = _init_library_size(self.adata_manager, self.summary_stats["n_batch"])
 
         # self.summary_stats provides information about anndata dimensions and other tensor info
+
+        if self.class_weights:
+            self.class_weights_tensor = self.calculate_class_weighting()
 
         self.module = VAEModule(
             n_input=self.summary_stats["n_vars"],
@@ -135,6 +140,8 @@ class VAEModel(BaseModelClass, VAEMixin, TunableMixin, RNASeqMixin):
             encode_batch=self.encode_batch,
             transform_batch=self.transform_batch,
             batch_representation=self.batch_representation,
+            class_weights=self.class_weights,
+            class_weights_tensor=self.class_weights_tensor if self.class_weights else None,
             **model_kwargs,
         )
         self._model_summary_string = (
@@ -149,6 +156,22 @@ class VAEModel(BaseModelClass, VAEMixin, TunableMixin, RNASeqMixin):
         tl = pd.DataFrame(columns=["index", "label"])
         tl["index"], tl["label"] = range(0, len(self.adata.obs)), self.adata.obs.labels_key.values
         self.train_labels = tl.copy()
+
+    def calculate_class_weighting(self):
+        """
+        Calculates class weights based on the inverse frequency of each class in the dataset.
+
+        Returns
+        -------
+        torch.Tensor
+            A tensor containing the weights for each class.
+        """
+        labels = self.adata.obs["labels_key"]
+        unique_labels, counts = np.unique(labels, return_counts=True)
+        total_samples = len(labels)
+        class_weights = total_samples / (len(unique_labels) * counts)
+        class_weights_tensor = torch.tensor(class_weights, dtype=torch.float32)
+        return class_weights_tensor
 
     @classmethod
     @setup_anndata_dsp.dedent
@@ -273,7 +296,7 @@ class VAEModel(BaseModelClass, VAEMixin, TunableMixin, RNASeqMixin):
         use_gpu: bool = False,
         validation_size: float = 0.2,
         patience: int = 15,
-        min_delta: float = 0.1,
+        min_delta: float = 0.5,
     ):
         """
         Train the model with validation support and a progress bar, with early stopping.
@@ -317,7 +340,7 @@ class VAEModel(BaseModelClass, VAEMixin, TunableMixin, RNASeqMixin):
         optimizer = Adam(self.module.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
         # Initialize learning rate scheduler
-        scheduler = ReduceLROnPlateau(optimizer, "min", patience=10, factor=0.5, min_lr=1e-5)
+        scheduler = ReduceLROnPlateau(optimizer, "min", patience=15, factor=0.85, min_lr=1e-5)
 
         # Progress bar setup
         progress_bar = tqdm(range(max_epochs), desc="Epochs", leave=True)
