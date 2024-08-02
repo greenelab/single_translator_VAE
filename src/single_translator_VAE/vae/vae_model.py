@@ -295,8 +295,8 @@ class VAEModel(BaseModelClass, VAEMixin, TunableMixin, RNASeqMixin):
         max_epochs: int = 500,
         use_gpu: bool = False,
         validation_size: float = 0.2,
-        patience: int = 15,
-        min_delta: float = 0.5,
+        patience: int = 18,
+        min_delta: float = 0.35,
     ):
         """
         Train the model with validation support and a progress bar, with early stopping.
@@ -340,7 +340,7 @@ class VAEModel(BaseModelClass, VAEMixin, TunableMixin, RNASeqMixin):
         optimizer = Adam(self.module.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
         # Initialize learning rate scheduler
-        scheduler = ReduceLROnPlateau(optimizer, "min", patience=15, factor=0.85, min_lr=1e-5)
+        scheduler = ReduceLROnPlateau(optimizer, "min", patience=20, factor=0.85, min_lr=1e-5)
 
         # Progress bar setup
         progress_bar = tqdm(range(max_epochs), desc="Epochs", leave=True)
