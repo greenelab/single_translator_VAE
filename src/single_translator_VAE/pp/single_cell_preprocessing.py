@@ -307,8 +307,8 @@ def match_cell_types(adata1: AnnData, adata2: AnnData, cells_to_keep: np.array):
         AnnData with same cell types.
     """
     # match cells:
-    adata1 = adata1[adata1.obs["cell_types"].isin(cells_to_keep)]
-    adata2 = adata2[adata2.obs["cell_types"].isin(cells_to_keep)]
+    adata1 = adata1[adata1.obs["cell_types"].isin(cells_to_keep)].copy()
+    adata2 = adata2[adata2.obs["cell_types"].isin(cells_to_keep)].copy()
 
     return adata1, adata2
 

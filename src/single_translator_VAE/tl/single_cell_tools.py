@@ -6,10 +6,12 @@ import numpy as np
 import pandas as pd
 import ray as ray
 import scanpy as sc
+import sklearn as sk
 import torch
 import torch.nn
 from scipy.optimize import nnls
 from scipy.stats import poisson
+from sklearn.preprocessing import MinMaxScaler
 
 import single_translator_VAE as sv
 
@@ -51,19 +53,18 @@ def prep_files_for_deconvolution(bulks, reference, path, file_name, deconvolutio
     """
     genes = reference.var.index
     cell_types = reference.obs.cell_types.unique()
-    reference = reference.X.toarray()
 
     method_path = os.path.join(path, deconvolution_method, "input_data")
     if not os.path.exists(method_path):
         os.makedirs(method_path)
 
-    file_paths = {}
+    files = {}
     match deconvolution_method:
         case "cibersortx":
             reference_data = np.vstack([np.append("gene_ids", cell_types), np.column_stack([genes, reference])])
             ref_file_path = os.path.join(method_path, f"{file_name}_reference.txt")
             np.savetxt(ref_file_path, reference_data, fmt="%s", delimiter="\t")
-            file_paths["reference"] = ref_file_path
+            files["reference"] = ref_file_path
 
             if bulks is not None:
                 bulks_data = np.vstack(
@@ -71,33 +72,57 @@ def prep_files_for_deconvolution(bulks, reference, path, file_name, deconvolutio
                 )
                 bulks_file_path = os.path.join(method_path, f"{file_name}_bulks.txt")
                 np.savetxt(bulks_file_path, bulks_data, fmt="%s", delimiter="\t")
-                file_paths["bulks"] = bulks_file_path
+                files["bulks"] = bulks_file_path
+
         case "nnls":
-            reference_data = np.hstack([np.array([["gene_ids"] + list(genes)]).T, np.vstack([cell_types, reference]).T])
+            # Making cell type reference, then scaling
+            ref_raw = pd.DataFrame(index=genes, columns=cell_types)
+            for cell_type in cell_types:
+                cell_df = reference[reference.obs["cell_types"].isin([cell_type])].X.toarray()
+                cell_sample = sk.utils.resample(cell_df, n_samples=10000, replace=True)
+                ref_raw[cell_type] = cell_sample.sum(axis=0)
+
+            # clippign before scaling to 95th pecentile
+            clip_upper = np.quantile(ref_raw.values, 0.95)
+            ref_raw_val = np.clip(ref_raw.values, 0, clip_upper)
+
+            # and scaling to be between values 0 and 1 to use for NNLS
+            scaler = MinMaxScaler()
+            scaler.fit(ref_raw_val)
+            ref_raw_val = scaler.transform(ref_raw_val)
+            reference_data = pd.DataFrame(ref_raw_val, index=genes, columns=cell_types)
+
             ref_file_path = os.path.join(method_path, f"{file_name}_reference.txt")
             np.savetxt(ref_file_path, reference_data, fmt="%s", delimiter="\t")
-            file_paths["reference"] = ref_file_path
+            files["reference"] = reference_data
 
             if bulks is not None:
-                bulks_data = np.hstack(
-                    [np.array([["gene_ids"] + list(genes)]).T, np.vstack([np.arange(bulks.shape[1]), bulks]).T]
-                )
+                # clippign before scaling to 95th pecentile
+                clip_upper = np.quantile(bulks.values, 0.95)
+                pseudo_df = np.clip(bulks.values, 0, clip_upper)
+                # and normalize to values between 0 and 1
+                scaler = MinMaxScaler()
+                scaler.fit(pseudo_df)
+                normalized_pseudo_df = scaler.transform(pseudo_df)
+                bulks_data = pd.DataFrame(normalized_pseudo_df, columns=genes)
+
                 bulks_file_path = os.path.join(method_path, f"{file_name}_bulks.txt")
                 np.savetxt(bulks_file_path, bulks_data, fmt="%s", delimiter="\t")
-                file_paths["bulks"] = bulks_file_path
+                files["bulks"] = bulks_data
+
         case "bayesprism":
             reference_df = pd.DataFrame(reference, index=genes, columns=cell_types)
             ref_file_path = os.path.join(method_path, f"{file_name}_reference.csv")
             reference_df.to_csv(ref_file_path, index_label=False)
-            file_paths["reference"] = ref_file_path
+            files["reference"] = ref_file_path
 
             if bulks is not None:
                 bulks_df = pd.DataFrame(bulks, index=genes, columns=np.arange(bulks.shape[1]))
                 bulks_file_path = os.path.join(method_path, f"{file_name}_bulks.csv")
                 bulks_df.to_csv(bulks_file_path, index_label=False)
-                file_paths["bulks"] = bulks_file_path
+                files["bulks"] = bulks_file_path
 
-    return file_paths
+    return files
 
 
 def make_pseudobulks(adata, number_of_bulks, num_cells, prop_type, noise):
@@ -133,6 +158,7 @@ def make_pseudobulks(adata, number_of_bulks, num_cells, prop_type, noise):
             raise ValueError("prop_type must be either 'random' or 'real'")
 
         cell_counts = (prop_vector * num_cells).astype(int)
+
         while np.any(cell_counts == 0):
             prop_vector = np.random.dirichlet(np.ones(len(cell_types)))
             cell_counts = (prop_vector * num_cells).astype(int)
@@ -446,7 +472,7 @@ def calc_nnls(all_refs, prop_df, pseudo_df):
 
         # Extracting reference matrix and verifying its integrity
         ref = ref_df.values
-        if ref.shape[0] != prop_df.shape[1]:
+        if ref.shape[1] != prop_df.shape[1]:
             raise ValueError(f"Reference '{exp}' and prop_df have inconsistent dimensions.")
 
         # Calculate predicted values and residuals for each row
