@@ -55,7 +55,7 @@ dependencies = [
     "dnspython==2.6.1",
     "docrep==0.3.2",
     "docutils==0.20.1",
-    "etils==1.8.0",
+    "etils",
     "executing==2.0.1",
     "fastjsonschema==2.19.1",
     "filelock==3.13.4",
