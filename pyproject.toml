@@ -76,7 +76,7 @@ dependencies = [
     "importlib_resources==6.4.0",
     "iniconfig==2.0.0",
     "ipykernel==6.29.4",
-    "ipython==8.23.0",
+    "ipython",
     "ipywidgets==8.1.2",
     "jaraco.classes==3.4.0",
     "jaraco.context==5.3.0",
