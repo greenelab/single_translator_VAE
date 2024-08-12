@@ -23,7 +23,8 @@ dependencies = [
     "session-info",
     "scvi",
     "scvi-tools",
-    "scanpy"
+    "scanpy",
+    "openTSNE"
 ]
 
 [project.optional-dependencies]
