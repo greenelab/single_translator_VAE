@@ -212,8 +212,12 @@ class VAEModel(BaseModelClass, VAEMixin, TunableMixin, RNASeqMixin):
         -------
         AnnData Manager Object, AnnData
         """
-        assert not torch.isinf(torch.tensor(adata.X.toarray())).any(), "Input data contains infinite values"
-        assert (torch.tensor(adata.X.toarray()) < 1e10).all(), "Input data contains extremely high values"
+        if type(adata.X) != np.ndarray:
+            assert not torch.isinf(torch.tensor(adata.X.toarray())).any(), "Input data contains infinite values"
+            assert (torch.tensor(adata.X.toarray()) < 1e10).all(), "Input data contains extremely high values"
+        else:
+            assert not torch.isinf(torch.tensor(adata.X)).any(), "Input data contains infinite values"
+            assert (torch.tensor(adata.X) < 1e10).all(), "Input data contains extremely high values"
         setup_method_args = cls._get_setup_method_args(**locals())
         anndata_fields = [
             LayerField(REGISTRY_KEYS.X_KEY, layer, is_count_data=True),
