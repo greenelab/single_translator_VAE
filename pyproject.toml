@@ -20,8 +20,11 @@ urls.Source = "https://github.com/ivichadriana/single_translator_VAE"
 urls.Home-page = "https://github.com/ivichadriana/single_translator_VAE"
 dependencies = [
     "anndata",
-    # for debug logging (referenced from the issue template)
     "session-info",
+    "scvi",
+    "scvi-tools",
+    "scanpy",
+    "openTSNE"
 ]
 
 [project.optional-dependencies]

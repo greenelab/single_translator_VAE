@@ -63,6 +63,8 @@ class VAEModule(BaseModuleClass, TunableMixin):
         transform_batch: torch.Tensor | None = None,
         encode_batch: bool = False,
         batch_representation: str = "one-hot",
+        class_weights: bool = True,
+        class_weights_tensor=None,
         **kwargs,
     ):
         super().__init__()
@@ -85,6 +87,8 @@ class VAEModule(BaseModuleClass, TunableMixin):
         self.n_latent = n_latent
         self.transform_batch = transform_batch
         self.batch_representation = batch_representation
+        self.class_weights = class_weights
+        self.class_weights_tensor = class_weights_tensor
 
         if self.dispersion == "gene":
             self.px_r = torch.nn.Parameter(torch.randn(n_input))
@@ -249,11 +253,11 @@ class VAEModule(BaseModuleClass, TunableMixin):
         inference_outputs: dict[str, torch.Tensor | Distribution | None],
         generative_outputs: dict[str, Distribution | None],
     ) -> LossOutput:
-        """Compute the loss."""
+        """Computes the loss function values"""
         from torch.distributions import kl_divergence
 
         x = tensors[REGISTRY_KEYS.X_KEY]
-        batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
+        labels = tensors[REGISTRY_KEYS.LABELS_KEY].long()
 
         # KL divergence for the latent space
         kl_divergence_z = kl_divergence(
@@ -262,19 +266,16 @@ class VAEModule(BaseModuleClass, TunableMixin):
         ).sum(dim=-1)
 
         # KL divergence for the library size
-        if not self.use_observed_lib_size:
-            local_library_log_means, local_library_log_vars = self._compute_local_library_params(batch_index)
-            kl_divergence_l = kl_divergence(
-                Normal(inference_outputs["ql_m"], torch.sqrt(inference_outputs["ql_v"])),
-                Normal(local_library_log_means, torch.sqrt(local_library_log_vars)),
-            ).sum(dim=1)
-        else:
-            kl_divergence_l = torch.tensor(0.0, device=x.device)
+        kl_divergence_l = torch.tensor(0.0, device=x.device)
 
         # Reconstruction loss
         reconst_loss = (
             -NegativeBinomial(mu=generative_outputs["px_rate"], theta=generative_outputs["px_r"]).log_prob(x).sum(-1)
         )
+
+        # Apply class weights if enabled
+        if self.class_weights:
+            reconst_loss = reconst_loss * self.class_weights_tensor[labels]
 
         weighted_kl = self.kl_weight * (kl_divergence_z + kl_divergence_l)
         weighted_recon = self.recon_weight * reconst_loss
@@ -291,6 +292,55 @@ class VAEModule(BaseModuleClass, TunableMixin):
             reconstruction_loss=weighted_recon,
             kl_local={"kl_divergence_z": kl_divergence_z, "kl_divergence_l": kl_divergence_l},
         ), losses_dict
+
+    # def loss(
+    #     self,
+    #     tensors: dict[str, torch.Tensor],
+    #     inference_outputs: dict[str, torch.Tensor | Distribution | None],
+    #     generative_outputs: dict[str, Distribution | None],
+    # ) -> LossOutput:
+    #     """Compute the loss."""
+    #     from torch.distributions import kl_divergence
+
+    #     x = tensors[REGISTRY_KEYS.X_KEY]
+    #     batch_index = tensors[REGISTRY_KEYS.BATCH_KEY]
+
+    #     # KL divergence for the latent space
+    #     kl_divergence_z = kl_divergence(
+    #         Normal(inference_outputs["qz_m"], torch.sqrt(inference_outputs["qz_v"])),
+    #         Normal(torch.zeros_like(inference_outputs["qz_m"]), torch.ones_like(inference_outputs["qz_v"])),
+    #     ).sum(dim=-1)
+
+    #     # KL divergence for the library size
+    #     if not self.use_observed_lib_size:
+    #         local_library_log_means, local_library_log_vars = self._compute_local_library_params(batch_index)
+    #         kl_divergence_l = kl_divergence(
+    #             Normal(inference_outputs["ql_m"], torch.sqrt(inference_outputs["ql_v"])),
+    #             Normal(local_library_log_means, torch.sqrt(local_library_log_vars)),
+    #         ).sum(dim=1)
+    #     else:
+    #         kl_divergence_l = torch.tensor(0.0, device=x.device)
+
+    #     # Reconstruction loss
+    #     reconst_loss = (
+    #         -NegativeBinomial(mu=generative_outputs["px_rate"], theta=generative_outputs["px_r"]).log_prob(x).sum(-1)
+    #     )
+
+    #     weighted_kl = self.kl_weight * (kl_divergence_z + kl_divergence_l)
+    #     weighted_recon = self.recon_weight * reconst_loss
+
+    #     # Combine all weighted losses
+    #     total_loss = torch.mean(weighted_recon + weighted_kl)
+    #     losses_dict = {
+    #         "reconstruction_loss": weighted_recon.mean().item(),
+    #         "kl_local": weighted_kl.mean().item(),
+    #     }
+
+    #     return LossOutput(
+    #         loss=total_loss,
+    #         reconstruction_loss=weighted_recon,
+    #         kl_local={"kl_divergence_z": kl_divergence_z, "kl_divergence_l": kl_divergence_l},
+    #     ), losses_dict
 
     def _compute_local_library_params(self, batch_index: torch.Tensor):
         """Computes local library parameters.

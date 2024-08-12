@@ -1,5 +1,6 @@
 from .single_cell_tools import (
     augment_data,
+    calc_nnls,
     calculate_rmse,
     calculate_rmse_per_celltype,
     evaluate_deconvolution_references,

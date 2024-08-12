@@ -5,8 +5,77 @@ import numpy as np
 import seaborn as sns
 import torch
 from matplotlib.patches import Patch
+from openTSNE import TSNEEmbedding, affinity, initialization
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
+
+
+def deconvolution_tsne(normalized_pseudo_df, ref_df):
+    """
+    Generate t-SNE plots of reference data frames projected into the t-SNE space of normalized pseudobulks.
+
+    This function visualizes the alignment of reference cell type expression profiles with pseudobulk data
+    using t-Distributed Stochastic Neighbor Embedding (t-SNE). The function projects both the normalized
+    pseudobulk data and the reference data into a shared t-SNE space and plots the results for comparison.
+
+    Parameters
+    ----------
+    normalized_pseudo_df : pandas.DataFrame
+        DataFrame containing the normalized pseudobulk expression data. Each row represents a sample,
+        and each column represents a gene.
+    ref_df : pandas.DataFrame
+        DataFrame containing the reference expression data. Each row represents a gene, and each column
+        represents a cell type or sample.
+
+    Returns
+    -------
+    None
+        The function generates and displays a t-SNE plot comparing the reference and pseudobulk data.
+        The plot is displayed using matplotlib.
+
+    Notes
+    -----
+    - The t-SNE embeddings are optimized separately for the pseudobulk and reference data.
+    - The PerplexityBasedNN method is used to compute the affinities, and PCA is used for initial embedding.
+    - The function uses a high perplexity value of 60 to capture the global structure of the data.
+    - The reference data is transformed into the pseudobulk t-SNE space for visualization.
+    """
+    # tsne plots of reference dataframes projected in normalized pseudobulks TSNE
+    # figures
+    plt.figure(figsize=(12, 5))
+    # data used
+    x_train = normalized_pseudo_df.values
+    x_test = ref_df.T.values
+
+    # Compute the affinities between data points
+    affinities_train = affinity.PerplexityBasedNN(
+        x_train,
+        perplexity=60,
+        metric="euclidean",
+        n_jobs=8,
+        random_state=42,
+        verbose=True,
+    )
+    # initialize coordinates for embedd.
+    init_train = initialization.pca(x_train, random_state=42)
+    embedding_train = TSNEEmbedding(
+        init_train,
+        affinities_train,
+        negative_gradient_method="fft",
+        n_jobs=8,
+        verbose=True,
+    )
+    # optimize embedding
+    embedding_train = embedding_train.optimize(n_iter=500)
+    # transform both in train embedd.
+    tsne_train = embedding_train.transform(x_train)
+    tsne_test = embedding_train.transform(x_test)
+    plt.scatter(tsne_train[:, 0], tsne_train[:, 1], label="Pseudobulks tSNE")
+    plt.scatter(tsne_test[:, 0], tsne_test[:, 1], label="Reference tSNE")
+    plt.title("Reference in Pseudobulks TSNE")
+    plt.xlabel("tSNE 1")
+    plt.ylabel("tSNE 2")
+    plt.legend()
 
 
 def loss_plots(
@@ -17,7 +86,6 @@ def loss_plots(
     all_val_losses: Optional[dict] = None,
 ):
     """
-
     Plot the training loss over epochs.
 
     Parameters
@@ -539,22 +607,28 @@ def deconvolution_results(evaluation_results):
     rmse_values = [evaluation_results[ref]["RMSE"] for ref in ref_names]
     correlation_values = [evaluation_results[ref]["Correlation"] for ref in ref_names]
 
+    # Define custom colors for each reference
+    colors = ["red", "blue", "pink"]
+    palette = dict(zip(ref_names, colors))
+
     # Plot RMSE
     plt.figure(figsize=(10, 5))
-    sns.barplot(x=ref_names, y=rmse_values, palette="viridis")
+    sns.barplot(x=ref_names, y=rmse_values, palette=palette, hue=ref_names, dodge=False, alpha=0.6)
     plt.title("RMSE for Each Reference")
     plt.ylabel("RMSE")
     plt.xlabel("Reference")
     plt.ylim(0, max(rmse_values) * 1.1)
+    plt.legend([], [], frameon=False)  # Hides the legend
     plt.show()
 
     # Plot Pearson's Correlation
     plt.figure(figsize=(10, 5))
-    sns.barplot(x=ref_names, y=correlation_values, palette="plasma")
+    sns.barplot(x=ref_names, y=correlation_values, palette=palette, hue=ref_names, dodge=False, alpha=0.6)
     plt.title("Pearson's Correlation for Each Reference")
     plt.ylabel("Correlation")
     plt.xlabel("Reference")
     plt.ylim(0, 1)
+    plt.legend([], [], frameon=False)  # Hides the legend
     plt.show()
 
 
