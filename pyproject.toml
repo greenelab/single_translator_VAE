@@ -176,7 +176,7 @@ dependencies = [
     "rpy2==3.5.16",
     "scanpy==1.10.1",
     "scikit-learn==1.4.2",
-    "scikit-misc==0.4.0",
+    "scikit-misc",
     "scipy==1.13.0",
     "scvi==0.6.8",
     "scvi-tools==1.1.5",
